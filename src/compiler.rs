@@ -12,44 +12,56 @@ pub fn compile(mut instructions: Vec<Spanned<MetaInstruction>>, source: &str) ->
         map.insert(format!("R{i}"), (i, None));
     }
 
+    map.insert("SP".into(), (0, None));
+    map.insert("LCL".into(), (1, None));
+    map.insert("ARG".into(), (2, None));
+    map.insert("THIS".into(), (3, None));
+    map.insert("THAT".into(), (4, None));
+    map.insert("SCREEN".into(), (16384, None));
+    map.insert("KBD".into(), (24576, None));
+
     let mut i = 0;
 
     for instruction in &mut instructions {
-        println!("{:?}", instruction);
         let span = instruction.span;
-        if let MetaInstruction::Label(str) = &mut instruction.inner {
-            let s = take(str);
 
-            if map.contains_key(&s) {
-                let span = ("input", span.into_range());
+        match &mut instruction.inner {
+            MetaInstruction::Label(str) => {
+                let s = take(str);
 
-                let mut report = Report::build(ReportKind::Error, span.clone())
-                    .with_message(format!("'{s}' declared multiple times!"));
+                if map.contains_key(&s) {
+                    let span = ("input", span.into_range());
 
-                if let Some(first) = map[&s].1.clone() {
-                    report = report.with_label(
-                        Label::new(("input", first))
-                            .with_message("First declared here")
-                            .with_color(Color::Cyan),
-                    );
+                    let mut report = Report::build(ReportKind::Error, span.clone())
+                        .with_message(format!("'{s}' declared multiple times!"));
+
+                    if let Some(first) = map[&s].1.clone() {
+                        report = report.with_label(
+                            Label::new(("input", first))
+                                .with_message("First declared here")
+                                .with_color(Color::Cyan),
+                        );
+                    }
+
+                    report
+                        .with_label(
+                            Label::new(span)
+                                .with_message("Redeclared here")
+                                .with_color(Color::Red),
+                        )
+                        .finish()
+                        .eprint(("input", Source::from(source)))
+                        .ok();
+
+                    exit(1)
                 }
 
-                report
-                    .with_label(
-                        Label::new(span)
-                            .with_message("Redeclared here")
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(("input", Source::from(source)))
-                    .ok();
-
-                exit(1)
+                map.insert(s, (i, Some(span.into_range())));
             }
-
-            map.insert(s, (i, Some(span.into_range())));
-        } else {
-            i += 1;
+            MetaInstruction::Comment(_) => {}
+            _ => {
+                i += 1;
+            }
         }
     }
 

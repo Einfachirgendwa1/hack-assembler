@@ -4,6 +4,7 @@ use chumsky::Parser;
 use color_eyre::Result;
 use std::fs::{read_to_string, write};
 use std::process::exit;
+use std::time::Instant;
 
 mod cli;
 mod compiler;
@@ -33,6 +34,7 @@ fn new_dest(a: i8, d: i8, m: i8) -> Dest {
 }
 
 fn main() -> Result<()> {
+    let start = Instant::now();
     let file = Cli::file();
     let content = read_to_string(file)?;
 
@@ -66,6 +68,7 @@ fn main() -> Result<()> {
         .join("\n");
 
     write("output.hack", output)?;
+    println!("Finished in {:.2?}", start.elapsed());
 
     Ok(())
 }

@@ -1,11 +1,11 @@
-use crate::{Comp, Dest, Jump, MetaInstruction, new_dest};
+use crate::{new_dest, Comp, Dest, Jump, MetaInstruction};
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::Rich;
 use chumsky::input::MapExtra;
 use chumsky::prelude::{any, choice, empty, end, just};
 use chumsky::span::Spanned;
-use chumsky::text::{newline, whitespace};
-use chumsky::{IterParser, Parser, extra, text};
+use chumsky::text::{newline, whitespace, Char};
+use chumsky::{extra, text, IterParser, Parser};
 use std::process::exit;
 
 pub fn parser<'a>(
@@ -46,14 +46,13 @@ pub fn parser<'a>(
                         exit(1)
                     }
                 })
-                .or(text::ident()
-                    .map(|s: &str| MetaInstruction::UnresolvedAInstruction(s.to_string()))),
+                .or(label_text().map(MetaInstruction::UnresolvedAInstruction)),
         )
         .then_ignore(termination);
 
-    let label = text::ident()
+    let label = label_text()
         .delimited_by(just("("), just(")"))
-        .map(|str: &str| MetaInstruction::Label(str.to_string()))
+        .map(MetaInstruction::Label)
         .then_ignore(termination);
 
     let c_instruction = dest()
@@ -73,6 +72,14 @@ pub fn parser<'a>(
         .collect::<Vec<_>>()
 }
 
+fn label_text<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> {
+    any()
+        .filter(|c: &char| c.is_ident_continue() || ['_', '.', '$'].contains(c))
+        .repeated()
+        .at_least(1)
+        .collect()
+}
+
 pub fn comp<'a>() -> impl Parser<'a, &'a str, Comp, extra::Err<Rich<'a, char>>> {
     choice([
         just("0").to(0b0_101010),
@@ -81,9 +88,9 @@ pub fn comp<'a>() -> impl Parser<'a, &'a str, Comp, extra::Err<Rich<'a, char>>> 
         just("D+1").to(0b0_011111),
         just("A+1").to(0b0_110111),
         just("M+1").to(0b1_110111),
-        just("D-1").to(0b0_001111),
-        just("A-1").to(0b0_110011),
-        just("M-1").to(0b1_110011),
+        just("D-1").to(0b0_001110),
+        just("A-1").to(0b0_110010),
+        just("M-1").to(0b1_110010),
         just("D+A").to(0b0_000010),
         just("D+M").to(0b1_000010),
         just("D-A").to(0b0_010011),
@@ -114,6 +121,7 @@ fn dest<'a>() -> impl Parser<'a, &'a str, Dest, extra::Err<Rich<'a, char>>> {
         just("AM").to(new_dest(1, 0, 1)),
         just("A").to(new_dest(1, 0, 0)),
         just("DM").to(new_dest(0, 1, 1)),
+        just("MD").to(new_dest(0, 1, 1)),
         just("D").to(new_dest(0, 1, 0)),
         just("M").to(new_dest(0, 0, 1)),
     ])
