@@ -1,95 +1,136 @@
-use crate::{Comp, Dest, Instruction, Jump, MetaInstruction};
+use crate::{Comp, Dest, Jump, MetaInstruction, new_dest};
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::Rich;
-use chumsky::prelude::{empty, just};
+use chumsky::input::MapExtra;
+use chumsky::prelude::{any, choice, empty, end, just};
+use chumsky::span::Spanned;
+use chumsky::text::{newline, whitespace};
 use chumsky::{IterParser, Parser, extra, text};
+use std::process::exit;
 
-pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Instruction>, extra::Err<Rich<'a, char>>> {
-    let a_instruction = just("@").ignore_then(
-        text::int::<_, extra::Err<Rich<'a, char>>>(10)
-            .from_str()
-            .unwrapped()
-            .map_with(|i, extra| Instruction {
-                meta: MetaInstruction::AInstruction(i),
-                span: extra.span(),
-            })
-            .or(text::ident().map_with(|s: &str, extra| Instruction {
-                meta: MetaInstruction::UnresolvedAInstruction(s.to_string()),
-                span: extra.span(),
-            })),
-    );
+pub fn parser<'a>(
+    source: Source,
+) -> impl Parser<'a, &'a str, Vec<Spanned<MetaInstruction>>, extra::Err<Rich<'a, char>>> {
+    let comment = just("//")
+        .ignore_then(any().and_is(newline().not()).repeated().collect::<String>())
+        .map(MetaInstruction::Comment);
+
+    let end_of_line = newline().or(end());
+    let termination = any()
+        .and_is(whitespace())
+        .and_is(end_of_line.not())
+        .repeated()
+        .ignore_then(end_of_line)
+        .or(just("//").ignore_then(any().and_is(end_of_line.not()).ignore_then(end_of_line)));
+
+    let a_instruction = just("@")
+        .ignore_then(
+            text::int(10)
+                .from_str()
+                .map_with(move |res, extra: &mut MapExtra<&str, _>| match res {
+                    Ok(val) => MetaInstruction::AInstruction(val),
+                    Err(err) => {
+                        let span = ("input", extra.span().into_range());
+
+                        Report::build(ReportKind::Error, span.clone())
+                            .with_message("Failed to parse number!")
+                            .with_label(
+                                Label::new(span)
+                                    .with_message(err.to_string())
+                                    .with_color(Color::Red),
+                            )
+                            .finish()
+                            .eprint(("input", source.clone()))
+                            .ok();
+
+                        exit(1)
+                    }
+                })
+                .or(text::ident()
+                    .map(|s: &str| MetaInstruction::UnresolvedAInstruction(s.to_string()))),
+        )
+        .then_ignore(termination);
 
     let label = text::ident()
         .delimited_by(just("("), just(")"))
-        .map_with(|str: &str, extra| Instruction {
-            meta: MetaInstruction::Label(str.to_string()),
-            span: extra.span(),
-        });
+        .map(|str: &str| MetaInstruction::Label(str.to_string()))
+        .then_ignore(termination);
 
-    let dest = text::ident().then_ignore(just("=")).map(|s: &str| {
-        let c = |ch: char| s.contains(ch) as i8;
-        Dest(c('M') | (c('D') << 1) | (c('A') << 2))
-    });
-
-    let c_instruction = dest
+    let c_instruction = dest()
         .or(empty().to(Dest(0)))
         .then(comp())
         .then(jump().or(empty().to(Jump(0))))
-        .map_with(|((dest, comp), jump), extra| Instruction {
-            meta: MetaInstruction::CInstruction(dest, comp, jump),
-            span: extra.span(),
-        });
+        .map(|((dest, comp), jump)| MetaInstruction::CInstruction(dest, comp, jump))
+        .then_ignore(termination);
 
     a_instruction
         .or(c_instruction)
         .or(label)
+        .or(comment)
+        .spanned()
         .padded()
         .repeated()
         .collect::<Vec<_>>()
 }
 
 pub fn comp<'a>() -> impl Parser<'a, &'a str, Comp, extra::Err<Rich<'a, char>>> {
-    just("0")
-        .map(|_| 0b0_101010)
-        .or(just("1").map(|_| 0b0_111111))
-        .or(just("-1").map(|_| 0b0_111010))
-        .or(just("D+1").map(|_| 0b0_011111))
-        .or(just("A+1").map(|_| 0b0_110111))
-        .or(just("M+1").map(|_| 0b1_110111))
-        .or(just("D-1").map(|_| 0b0_001111))
-        .or(just("A-1").map(|_| 0b0_110011))
-        .or(just("M-1").map(|_| 0b1_110011))
-        .or(just("D+A").map(|_| 0b0_000010))
-        .or(just("D+M").map(|_| 0b1_000010))
-        .or(just("D-A").map(|_| 0b0_010011))
-        .or(just("D-M").map(|_| 0b1_010011))
-        .or(just("A-D").map(|_| 0b0_000111))
-        .or(just("M-D").map(|_| 0b1_000111))
-        .or(just("D&A").map(|_| 0b0_000000))
-        .or(just("D&M").map(|_| 0b1_000000))
-        .or(just("D|A").map(|_| 0b0_010101))
-        .or(just("D|M").map(|_| 0b1_010101))
-        .or(just("!D").map(|_| 0b0_001101))
-        .or(just("!A").map(|_| 0b0_110001))
-        .or(just("!M").map(|_| 0b1_110001))
-        .or(just("-D").map(|_| 0b0_001111))
-        .or(just("-A").map(|_| 0b0_110011))
-        .or(just("-M").map(|_| 0b1_110011))
-        .or(just("D").map(|_| 0b0_001100))
-        .or(just("A").map(|_| 0b0_110000))
-        .or(just("M").map(|_| 0b1_110000))
-        .map(Comp)
+    choice([
+        just("0").to(0b0_101010),
+        just("1").to(0b0_111111),
+        just("-1").to(0b0_111010),
+        just("D+1").to(0b0_011111),
+        just("A+1").to(0b0_110111),
+        just("M+1").to(0b1_110111),
+        just("D-1").to(0b0_001111),
+        just("A-1").to(0b0_110011),
+        just("M-1").to(0b1_110011),
+        just("D+A").to(0b0_000010),
+        just("D+M").to(0b1_000010),
+        just("D-A").to(0b0_010011),
+        just("D-M").to(0b1_010011),
+        just("A-D").to(0b0_000111),
+        just("M-D").to(0b1_000111),
+        just("D&A").to(0b0_000000),
+        just("D&M").to(0b1_000000),
+        just("D|A").to(0b0_010101),
+        just("D|M").to(0b1_010101),
+        just("!D").to(0b0_001101),
+        just("!A").to(0b0_110001),
+        just("!M").to(0b1_110001),
+        just("-D").to(0b0_001111),
+        just("-A").to(0b0_110011),
+        just("-M").to(0b1_110011),
+        just("D").to(0b0_001100),
+        just("A").to(0b0_110000),
+        just("M").to(0b1_110000),
+    ])
+    .map(Comp)
+}
+
+fn dest<'a>() -> impl Parser<'a, &'a str, Dest, extra::Err<Rich<'a, char>>> {
+    choice([
+        just("ADM").to(new_dest(1, 1, 1)),
+        just("AD").to(new_dest(1, 1, 0)),
+        just("AM").to(new_dest(1, 0, 1)),
+        just("A").to(new_dest(1, 0, 0)),
+        just("DM").to(new_dest(0, 1, 1)),
+        just("D").to(new_dest(0, 1, 0)),
+        just("M").to(new_dest(0, 0, 1)),
+    ])
+    .then_ignore(just("="))
 }
 
 fn jump<'a>() -> impl Parser<'a, &'a str, Jump, extra::Err<Rich<'a, char>>> {
     just(";").ignore_then(
-        just("JGT")
-            .map(|_| 1)
-            .or(just("JEQ").map(|_| 2))
-            .or(just("JGE").map(|_| 3))
-            .or(just("JLT").map(|_| 4))
-            .or(just("JNE").map(|_| 5))
-            .or(just("JLE").map(|_| 6))
-            .or(just("JMP").map(|_| 7))
-            .map(Jump),
+        choice([
+            just("JGT").to(1),
+            just("JEQ").to(2),
+            just("JGE").to(3),
+            just("JLT").to(4),
+            just("JNE").to(5),
+            just("JLE").to(6),
+            just("JMP").to(7),
+        ])
+        .map(Jump),
     )
 }

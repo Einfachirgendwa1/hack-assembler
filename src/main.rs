@@ -1,7 +1,6 @@
 use crate::cli::Cli;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::Parser;
-use chumsky::span::SimpleSpan;
 use color_eyre::Result;
 use std::fs::{read_to_string, write};
 use std::process::exit;
@@ -9,12 +8,7 @@ use std::process::exit;
 mod cli;
 mod compiler;
 mod parser;
-
-#[derive(Debug)]
-struct Instruction {
-    meta: MetaInstruction,
-    span: SimpleSpan,
-}
+mod validator;
 
 #[derive(Debug)]
 enum MetaInstruction {
@@ -22,20 +16,30 @@ enum MetaInstruction {
     CInstruction(Dest, Comp, Jump),
     UnresolvedAInstruction(String),
     Label(String),
+    Comment(String),
 }
+
 #[derive(Debug, Clone)]
 struct Dest(i8);
 
 #[derive(Debug, Clone)]
 struct Jump(i8);
+
 #[derive(Debug)]
 struct Comp(i8);
+
+fn new_dest(a: i8, d: i8, m: i8) -> Dest {
+    Dest(m | (d << 1) | (a << 2))
+}
 
 fn main() -> Result<()> {
     let file = Cli::file();
     let content = read_to_string(file)?;
 
-    let parsing_result = match parser::parser().parse(content.as_str()).into_result() {
+    let parsing_result = match parser::parser(Source::from(content.clone()))
+        .parse(content.as_str())
+        .into_result()
+    {
         Ok(val) => val,
         Err(errs) => {
             for e in errs {

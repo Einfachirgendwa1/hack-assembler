@@ -1,17 +1,11 @@
-@R0
-M=1
+// test
+(mein_label)            // hallo das ist ein test
+A=1
 
-(write_67)
-@67
+
+// hi
+
 D=A
 
-@R0
-A=M
 
-M=D
-
-@R0
-M=M+1
-
-@write_67
-0;JMP
+@0
